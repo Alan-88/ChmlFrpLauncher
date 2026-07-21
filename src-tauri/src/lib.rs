@@ -1,4 +1,5 @@
 mod commands;
+mod extensions;
 mod models;
 mod utils;
 
@@ -242,6 +243,10 @@ pub fn run() {
             commands::process_persistence::get_persisted_running_tunnels,
             commands::process_persistence::stop_orphan_process,
             commands::process_persistence::is_tunnel_process_alive,
+            extensions::remote_runner::hosts::get_remote_hosts,
+            extensions::remote_runner::hosts::save_remote_host,
+            extensions::remote_runner::hosts::delete_remote_host,
+            extensions::remote_runner::hosts::test_remote_host,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

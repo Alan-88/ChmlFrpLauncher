@@ -25,6 +25,7 @@ import { AppearanceSection } from "./components/AppearanceSection";
 import { NetworkSection } from "./components/NetworkSection";
 import { SystemSection } from "./components/SystemSection";
 import { UpdateSection } from "./components/UpdateSection";
+import { RemoteHostsSection } from "./components/RemoteHostsSection";
 import { UpdateDialog } from "@/components/dialogs/UpdateDialog";
 import { updateService } from "@/services/updateService";
 import { toast } from "sonner";
@@ -263,6 +264,8 @@ export function Settings() {
           restartOnEdit={restartOnEdit}
           onToggleRestartOnEdit={setRestartOnEdit}
         />
+
+        <RemoteHostsSection />
 
         <UpdateSection
           checkingUpdate={checkingUpdate}
