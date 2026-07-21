@@ -1,7 +1,11 @@
+import {
+  ACCOUNT_OAUTH_CLIENT_ID,
+  ACCOUNT_OAUTH_CLIENT_SECRET,
+  ACCOUNT_OAUTH_ISSUER,
+  DEVICE_CODE_DEFAULT_SCOPE,
+} from "./oauthConfig";
+
 const API_BASE_URL = "https://cf-v2.uapis.cn";
-const ACCOUNT_OAUTH_ISSUER = "https://account-api.qzhua.net";
-const ACCOUNT_OAUTH_CLIENT_ID = "019d4334b34972ca9fd41513e5703dfd";
-const ACCOUNT_OAUTH_CLIENT_SECRET = "";
 
 export interface StoredUser {
   username: string;
@@ -109,7 +113,6 @@ interface RawHttpResponse {
 const isBrowser = typeof window !== "undefined";
 const NODE_UDP_CACHE_KEY = "node_udp_cache";
 const NODE_UDP_CACHE_TTL = 5 * 60 * 1000;
-const DEVICE_CODE_DEFAULT_SCOPE = "profile email offline_access chmlfrp_api";
 
 // 简单的请求去重（针对短时间内重复发起相同请求的场景）
 const pendingRequests = new Map<string, Promise<unknown>>();
