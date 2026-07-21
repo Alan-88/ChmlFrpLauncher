@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { fetchTunnels, type Tunnel } from "@/services/api";
+import { fetchTunnels, type StoredUser, type Tunnel } from "@/services/api";
 import { frpcManager } from "@/services/frpcManager";
 import { customTunnelService } from "@/services/customTunnelService";
 import { tunnelListCache } from "../cache";
 import type { UnifiedTunnel } from "../types";
 
-export function useTunnelList() {
+export function useTunnelList(user: StoredUser | null) {
   const [tunnels, setTunnels] = useState<UnifiedTunnel[]>(() => {
     return tunnelListCache.tunnels.map((t) => ({
       type: "api" as const,
@@ -24,58 +24,63 @@ export function useTunnelList() {
     tunnelsRef.current = tunnels;
   }, [tunnels]);
 
-  const checkRunningStatus = useCallback(async (currentTunnels?: UnifiedTunnel[]) => {
-    const tunnelsToCheck = currentTunnels || tunnelsRef.current;
-    const running = new Set<string>();
+  const checkRunningStatus = useCallback(
+    async (currentTunnels?: UnifiedTunnel[]) => {
+      const tunnelsToCheck = currentTunnels || tunnelsRef.current;
+      const running = new Set<string>();
 
-    const withTimeout = (promise: Promise<boolean>, timeoutMs: number) =>
-      new Promise<boolean>((resolve) => {
-        const timer = setTimeout(() => resolve(false), timeoutMs);
-        promise
-          .then((value) => {
-            clearTimeout(timer);
-            resolve(value);
-          })
-          .catch(() => {
-            clearTimeout(timer);
-            resolve(false);
-          });
-      });
+      const withTimeout = (promise: Promise<boolean>, timeoutMs: number) =>
+        new Promise<boolean>((resolve) => {
+          const timer = setTimeout(() => resolve(false), timeoutMs);
+          promise
+            .then((value) => {
+              clearTimeout(timer);
+              resolve(value);
+            })
+            .catch(() => {
+              clearTimeout(timer);
+              resolve(false);
+            });
+        });
 
-    await Promise.all(
-      tunnelsToCheck.map(async (tunnel) => {
-        if (tunnel.type === "api") {
-          const isRunning = await withTimeout(
-            frpcManager.isTunnelRunning(tunnel.data.id),
-            3000,
-          );
-          if (isRunning) {
-            running.add(`api_${tunnel.data.id}`);
+      await Promise.all(
+        tunnelsToCheck.map(async (tunnel) => {
+          if (tunnel.type === "api") {
+            const isRunning = await withTimeout(
+              frpcManager.isTunnelRunning(tunnel.data.id),
+              3000,
+            );
+            if (isRunning) {
+              running.add(`api_${tunnel.data.id}`);
+            }
+          } else {
+            const isRunning = await withTimeout(
+              customTunnelService.isCustomTunnelRunning(tunnel.data.id),
+              3000,
+            );
+            if (isRunning) {
+              running.add(`custom_${tunnel.data.id}`);
+            }
           }
-        } else {
-          const isRunning = await withTimeout(
-            customTunnelService.isCustomTunnelRunning(tunnel.data.id),
-            3000,
-          );
-          if (isRunning) {
-            running.add(`custom_${tunnel.data.id}`);
-          }
-        }
-      }),
-    );
+        }),
+      );
 
-    setRunningTunnels(running);
-  }, []);
+      setRunningTunnels(running);
+    },
+    [],
+  );
 
-  const loadTunnels = async () => {
+  const loadTunnels = useCallback(async () => {
     setLoading(true);
     setError("");
 
     try {
-      const [apiTunnels, customTunnels] = await Promise.all([
-        fetchTunnels().catch(() => [] as Tunnel[]),
-        customTunnelService.getCustomTunnels().catch(() => []),
-      ]);
+      const customTunnels = await customTunnelService
+        .getCustomTunnels()
+        .catch(() => []);
+      const apiTunnels: Tunnel[] = user?.accessToken
+        ? await fetchTunnels()
+        : [];
 
       const allTunnels: UnifiedTunnel[] = [
         ...apiTunnels.map((t) => ({ type: "api" as const, data: t })),
@@ -89,22 +94,16 @@ export function useTunnelList() {
       setLoading(false);
     } catch (err) {
       const message = err instanceof Error ? err.message : "获取隧道列表失败";
-      if (
-        message.includes("登录") ||
-        message.includes("token") ||
-        message.includes("令牌")
-      ) {
-        setError(message);
-      }
+      setError(message);
       console.error("获取隧道列表失败", err);
     } finally {
       setLoading(false);
     }
-  };
+  }, [checkRunningStatus, user?.accessToken]);
 
   useEffect(() => {
-    loadTunnels();
-  }, []);
+    void loadTunnels();
+  }, [loadTunnels]);
 
   // 监听守护进程自动重启事件
   useEffect(() => {
@@ -153,11 +152,13 @@ export function useTunnelList() {
       try {
         const { getCurrentWindow } = await import("@tauri-apps/api/window");
         const appWindow = getCurrentWindow();
-        const unlisten = await appWindow.onFocusChanged(({ payload: focused }) => {
-          if (focused) {
-            checkRunningStatus();
-          }
-        });
+        const unlisten = await appWindow.onFocusChanged(
+          ({ payload: focused }) => {
+            if (focused) {
+              checkRunningStatus();
+            }
+          },
+        );
         unlistenFn = unlisten;
       } catch (error) {
         console.error("Failed to setup window focus listener:", error);

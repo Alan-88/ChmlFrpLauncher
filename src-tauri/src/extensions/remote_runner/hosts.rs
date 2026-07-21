@@ -340,7 +340,7 @@ mod tests {
     fn input(ssh_target: &str) -> RemoteHostInput {
         RemoteHostInput {
             id: None,
-            name: "Home Server".to_string(),
+            name: "Test Host".to_string(),
             ssh_target: ssh_target.to_string(),
             frpc_path: "/opt/frp/frpc".to_string(),
             work_dir: "/var/lib/chmlfrp-launcher".to_string(),
@@ -349,7 +349,7 @@ mod tests {
 
     #[test]
     fn accepts_ssh_alias_and_absolute_paths() {
-        assert!(normalize_input(input("home-server")).is_ok());
+        assert!(normalize_input(input("test-host")).is_ok());
     }
 
     #[test]

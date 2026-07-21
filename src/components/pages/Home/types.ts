@@ -1,13 +1,7 @@
-import type {
-  UserInfo,
-  FlowPoint,
-  SignInInfo,
-  StoredUser,
-} from "@/services/api";
+import type { UserInfo, FlowPoint, SignInInfo } from "@/services/api";
 
 export interface HomeProps {
-  user?: StoredUser | null;
-  onUserChange?: (user: StoredUser | null) => void;
+  userInfo: UserInfo | null;
 }
 
-export type { UserInfo, FlowPoint, SignInInfo, StoredUser };
+export type { UserInfo, FlowPoint, SignInInfo };

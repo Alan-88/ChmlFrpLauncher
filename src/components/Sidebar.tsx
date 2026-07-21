@@ -12,19 +12,12 @@ import {
 } from "lucide-react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
-import {
-  createDeviceAuthorization,
-  exchangeDeviceCodeForToken,
-  loginWithAccessToken,
-  saveStoredUser,
-  type DeviceAuthorizationResponse,
-  type StoredUser,
-  type UserInfo,
-} from "@/services/api";
+import { type StoredUser, type UserInfo } from "@/services/api";
 import { performLogout } from "@/services/logout";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { SidebarMode } from "./pages/Settings/types";
 import { getInitialEffectType, type EffectType } from "./pages/Settings/utils";
+import { useDeviceLogin } from "./Sidebar/hooks/useDeviceLogin";
 
 interface SidebarProps {
   activeTab: string;
@@ -92,19 +85,23 @@ export function Sidebar({
     };
   }, []);
 
-  const [loginOpen, setLoginOpen] = useState(false);
-  const [rememberMe, setRememberMe] = useState(true);
-  const [loading, setLoading] = useState(false);
-  const [polling, setPolling] = useState(false);
-  const [error, setError] = useState("");
-  const [authSession, setAuthSession] =
-    useState<DeviceAuthorizationResponse | null>(null);
-  const [authMessage, setAuthMessage] = useState(
-    "将在浏览器中打开授权页面",
-  );
+  const {
+    loginOpen,
+    rememberMe,
+    setRememberMe,
+    loading,
+    polling,
+    error,
+    authSession,
+    authMessage,
+    closeLoginDialog,
+    handleLoginOpenChange,
+    openVerificationPage,
+    startDeviceLogin,
+    stopPolling,
+  } = useDeviceLogin(onUserChange);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
-  const pollingTimerRef = useRef<number | null>(null);
 
   // 点击外部关闭用户菜单
   useEffect(() => {
@@ -125,158 +122,6 @@ export function Sidebar({
     };
   }, [userMenuOpen]);
 
-  const stopPolling = () => {
-    if (pollingTimerRef.current) {
-      clearTimeout(pollingTimerRef.current);
-      pollingTimerRef.current = null;
-    }
-    setPolling(false);
-  };
-
-  const resetLoginFlow = () => {
-    stopPolling();
-    setLoading(false);
-    setError("");
-    setAuthSession(null);
-    setAuthMessage("将在浏览器中打开授权页面");
-  };
-
-  const closeLoginDialog = () => {
-    setLoginOpen(false);
-    resetLoginFlow();
-  };
-
-  const finishLogin = async (
-    accessToken: string,
-    options?: {
-      refreshToken?: string;
-      expiresIn?: number;
-      tokenType?: string;
-    },
-  ) => {
-    const authedUser = await loginWithAccessToken(accessToken, {
-      refresh_token: options?.refreshToken,
-      expires_in: options?.expiresIn,
-      token_type: options?.tokenType,
-    });
-    onUserChange(authedUser);
-    if (rememberMe) {
-      saveStoredUser(authedUser);
-    }
-    stopPolling();
-    setUserMenuOpen(false);
-    closeLoginDialog();
-  };
-
-  const scheduleTokenPolling = (deviceCode: string, intervalSeconds: number) => {
-    if (pollingTimerRef.current) {
-      clearTimeout(pollingTimerRef.current);
-    }
-
-    pollingTimerRef.current = window.setTimeout(() => {
-      void pollToken(deviceCode, intervalSeconds);
-    }, intervalSeconds * 1000);
-  };
-
-  const pollToken = async (deviceCode: string, intervalSeconds: number) => {
-    setPolling(true);
-    try {
-      const tokenResponse = await exchangeDeviceCodeForToken(deviceCode);
-
-      if (tokenResponse.access_token) {
-        await finishLogin(tokenResponse.access_token, {
-          refreshToken: tokenResponse.refresh_token,
-          expiresIn: tokenResponse.expires_in,
-          tokenType: tokenResponse.token_type,
-        });
-        return;
-      }
-
-      if (tokenResponse.error === "authorization_pending") {
-        setAuthMessage("请在浏览器中确认授权");
-        scheduleTokenPolling(deviceCode, intervalSeconds);
-        return;
-      }
-
-      if (tokenResponse.error === "slow_down") {
-        const nextInterval = intervalSeconds + 5;
-        setAuthMessage("连接受限，正在自动重试...");
-        scheduleTokenPolling(deviceCode, nextInterval);
-        return;
-      }
-
-      if (tokenResponse.error === "expired_token") {
-        stopPolling();
-        setError("这次设备授权已过期，请重新开始登录。");
-        return;
-      }
-
-      if (tokenResponse.error === "access_denied") {
-        stopPolling();
-        setError("你已取消本次授权，请重新开始登录。");
-        return;
-      }
-
-      throw new Error(
-        tokenResponse.error_description ||
-          tokenResponse.error ||
-          "获取访问令牌失败",
-      );
-    } catch (err) {
-      stopPolling();
-      setError(err instanceof Error ? err.message : "登录失败");
-    }
-  };
-
-  const openVerificationPage = async (
-    session: DeviceAuthorizationResponse | null,
-  ) => {
-    if (!session) {
-      setError("请先开始设备授权。");
-      return;
-    }
-
-    const target =
-      session.verification_uri_complete || session.verification_uri;
-
-    if (!target) {
-      setError("账户中心未返回可用的验证地址。");
-      return;
-    }
-
-    if (session.user_code) {
-      navigator.clipboard?.writeText(session.user_code).catch(() => undefined);
-    }
-
-    try {
-      await openUrl(target);
-      setAuthMessage("请在浏览器中完成授权");
-    } catch {
-      setAuthMessage("请手动打开验证页面完成授权");
-    }
-  };
-
-  const startDeviceLogin = async () => {
-    stopPolling();
-    setLoading(true);
-    setError("");
-    setAuthMessage("正在获取授权信息...");
-
-    try {
-      const session = await createDeviceAuthorization();
-      setAuthSession(session);
-      await openVerificationPage(session);
-      const intervalSeconds = Math.max(Number(session.interval || 5), 1);
-      void pollToken(session.device_code, intervalSeconds);
-    } catch (err) {
-      stopPolling();
-      setAuthSession(null);
-      setError(err instanceof Error ? err.message : "登录失败");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const menuItems = [
     { id: "home", label: "首页", icon: HomeIcon },
     { id: "tunnels", label: "隧道", icon: List },
@@ -285,7 +130,6 @@ export function Sidebar({
   ];
 
   const handleMenuClick = (itemId: string) => {
-    setError("");
     onTabChange(itemId);
   };
 
@@ -349,10 +193,6 @@ export function Sidebar({
         clearTimeout(animationTimeoutRef.current);
         animationTimeoutRef.current = null;
       }
-      if (pollingTimerRef.current) {
-        clearTimeout(pollingTimerRef.current);
-        pollingTimerRef.current = null;
-      }
     };
   }, []);
 
@@ -374,15 +214,7 @@ export function Sidebar({
 
   // Shared Dialog Component
   const LoginDialog = (
-    <Dialog
-      open={loginOpen}
-      onOpenChange={(open) => {
-        setLoginOpen(open);
-        if (!open) {
-          resetLoginFlow();
-        }
-      }}
-    >
+    <Dialog open={loginOpen} onOpenChange={handleLoginOpenChange}>
       <DialogContent
         showCloseButton={false}
         className="z-[10000] w-full max-w-[360px] overflow-hidden rounded-2xl bg-card/95 backdrop-blur-xl border border-border/50 p-0 shadow-2xl data-[state=closed]:slide-out-to-bottom-4 data-[state=open]:slide-in-from-bottom-4"
@@ -404,8 +236,12 @@ export function Sidebar({
         {/* 主体内容 */}
         <div className="px-6 pb-6 pt-0 space-y-5">
           <div className="text-center space-y-1">
-            <h2 className="text-lg font-semibold tracking-tight text-foreground">欢迎回来</h2>
-            <p className="text-xs text-muted-foreground">通过浏览器安全地登录你的账户</p>
+            <h2 className="text-lg font-semibold tracking-tight text-foreground">
+              欢迎回来
+            </h2>
+            <p className="text-xs text-muted-foreground">
+              通过浏览器安全地登录你的账户
+            </p>
           </div>
 
           {!authSession ? (
@@ -431,7 +267,9 @@ export function Sidebar({
           ) : (
             <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
               <div className="flex flex-col items-center justify-center p-4 rounded-xl bg-muted/30 border border-border/50">
-                <span className="text-xs font-medium text-muted-foreground mb-1.5">你的设备码</span>
+                <span className="text-xs font-medium text-muted-foreground mb-1.5">
+                  你的设备码
+                </span>
                 <span className="font-mono text-2xl font-bold tracking-widest text-foreground">
                   {authSession.user_code || "-"}
                 </span>
@@ -487,7 +325,9 @@ export function Sidebar({
 
           {error && (
             <div className="rounded-xl bg-destructive/10 border border-destructive/20 px-3 py-2.5 animate-in fade-in zoom-in-95 duration-200">
-              <p className="text-xs text-center text-destructive font-medium">{error}</p>
+              <p className="text-xs text-center text-destructive font-medium">
+                {error}
+              </p>
             </div>
           )}
         </div>
@@ -536,7 +376,10 @@ export function Sidebar({
           {user ? (
             <div className="flex items-center gap-3">
               <Avatar className="h-10 w-10 rounded-xl shadow-md">
-                <AvatarImage src={userInfo?.userimg || user?.userimg || undefined} alt={user.username} />
+                <AvatarImage
+                  src={userInfo?.userimg || user?.userimg || undefined}
+                  alt={user.username}
+                />
                 <AvatarFallback>
                   <User className="h-5 w-5" />
                 </AvatarFallback>
@@ -632,8 +475,7 @@ export function Sidebar({
             <button
               className="w-full text-left hover:bg-muted/50 transition-all duration-200 flex items-center gap-3 rounded-xl group relative p-2"
               onClick={() => {
-                setError("");
-                setLoginOpen(true);
+                handleLoginOpenChange(true);
               }}
             >
               <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-muted to-muted/80 flex items-center justify-center shadow-sm group-hover:shadow transition-shadow">
@@ -706,7 +548,10 @@ export function Sidebar({
               <>
                 <div className="flex-shrink-0 flex items-center justify-center">
                   <Avatar className="h-9 w-9 rounded-xl shadow-md">
-                    <AvatarImage src={userInfo?.userimg || user?.userimg || undefined} alt={user.username} />
+                    <AvatarImage
+                      src={userInfo?.userimg || user?.userimg || undefined}
+                      alt={user.username}
+                    />
                     <AvatarFallback>
                       <User className="h-5 w-5" />
                     </AvatarFallback>
@@ -716,7 +561,9 @@ export function Sidebar({
                   className="whitespace-nowrap overflow-hidden"
                   style={{
                     opacity: collapsed ? 0 : 1,
-                    transform: collapsed ? "translateX(-10px)" : "translateX(0)",
+                    transform: collapsed
+                      ? "translateX(-10px)"
+                      : "translateX(0)",
                     transition: "all 0.5s cubic-bezier(0.32, 0.72, 0, 1)",
                   }}
                 >
@@ -741,7 +588,9 @@ export function Sidebar({
                   className="whitespace-nowrap"
                   style={{
                     opacity: collapsed ? 0 : 1,
-                    transform: collapsed ? "translateX(-10px)" : "translateX(0)",
+                    transform: collapsed
+                      ? "translateX(-10px)"
+                      : "translateX(0)",
                     transition: "all 0.5s cubic-bezier(0.32, 0.72, 0, 1)",
                   }}
                 >
@@ -852,7 +701,9 @@ export function Sidebar({
                   className="overflow-hidden whitespace-nowrap"
                   style={{
                     opacity: collapsed ? 0 : 1,
-                    transform: collapsed ? "translateX(-10px)" : "translateX(0)",
+                    transform: collapsed
+                      ? "translateX(-10px)"
+                      : "translateX(0)",
                     transition: "all 0.4s cubic-bezier(0.4, 0, 0.2, 1)",
                   }}
                 >
@@ -876,8 +727,7 @@ export function Sidebar({
                   transition: "all 0.5s cubic-bezier(0.32, 0.72, 0, 1)",
                 }}
                 onClick={() => {
-                  setError("");
-                  setLoginOpen(true);
+                  handleLoginOpenChange(true);
                 }}
               >
                 <div className="flex-shrink-0 flex items-center justify-center">
@@ -889,7 +739,9 @@ export function Sidebar({
                   className="overflow-hidden whitespace-nowrap"
                   style={{
                     opacity: collapsed ? 0 : 1,
-                    transform: collapsed ? "translateX(-10px)" : "translateX(0)",
+                    transform: collapsed
+                      ? "translateX(-10px)"
+                      : "translateX(0)",
                     transition: "all 0.4s cubic-bezier(0.4, 0, 0.2, 1)",
                   }}
                 >

@@ -4,21 +4,18 @@ import {
   ACCOUNT_OAUTH_ISSUER,
   DEVICE_CODE_DEFAULT_SCOPE,
 } from "./oauthConfig";
+import {
+  clearStoredUser,
+  getStoredUser,
+  getStoredUserPersistence,
+  saveStoredUser,
+  type StoredUser,
+} from "./authSession";
+
+export { clearStoredUser, getStoredUser, saveStoredUser } from "./authSession";
+export type { StoredUser } from "./authSession";
 
 const API_BASE_URL = "https://cf-v2.uapis.cn";
-
-export interface StoredUser {
-  username: string;
-  usergroup: string;
-  userimg?: string | null;
-  usertoken?: string;
-  accessToken?: string;
-  refreshToken?: string;
-  accessTokenExpiresAt?: number;
-  tokenType?: string;
-  tunnelCount?: number;
-  tunnel?: number;
-}
 
 export interface UserInfo {
   id: number;
@@ -113,6 +110,19 @@ interface RawHttpResponse {
 const isBrowser = typeof window !== "undefined";
 const NODE_UDP_CACHE_KEY = "node_udp_cache";
 const NODE_UDP_CACHE_TTL = 5 * 60 * 1000;
+export const AUTH_SESSION_EXPIRED_MESSAGE = "登录信息已过期，请重新登录";
+const AUTHENTICATION_ERROR_PATTERNS = [
+  "登录信息错误",
+  "登录信息已过期",
+  "无效的登录状态",
+  "token无效",
+  "token失效",
+  "token过期",
+  "invalid token",
+  "invalid_grant",
+  "unauthorized",
+  "http 401",
+];
 
 // 简单的请求去重（针对短时间内重复发起相同请求的场景）
 const pendingRequests = new Map<string, Promise<unknown>>();
@@ -130,6 +140,20 @@ function normalizeHeaders(h?: HeadersInit): Record<string, string> {
     return obj;
   }
   return h as Record<string, string>;
+}
+
+export function isAuthenticationError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  const normalized = message.toLowerCase();
+  return AUTHENTICATION_ERROR_PATTERNS.some((pattern) =>
+    normalized.includes(pattern.toLowerCase()),
+  );
+}
+
+function hasAuthorizationHeader(headers: Record<string, string>): boolean {
+  return Object.keys(headers).some(
+    (header) => header.toLowerCase() === "authorization",
+  );
 }
 
 function getBypassProxy(): boolean {
@@ -174,30 +198,6 @@ function getOAuthErrorMessage(
   return response.error_description || response.error || fallback;
 }
 
-function normalizeStoredUser(user: StoredUser | null): StoredUser | null {
-  if (!user) {
-    return null;
-  }
-  const normalized: StoredUser = { ...user };
-  if (normalized.accessTokenExpiresAt != null) {
-    const expiresAt = Number(normalized.accessTokenExpiresAt);
-    normalized.accessTokenExpiresAt = Number.isFinite(expiresAt)
-      ? expiresAt
-      : undefined;
-  }
-  return normalized;
-}
-
-function getLegacyApiToken(user: StoredUser | null): string | undefined {
-  if (!user?.usertoken) {
-    return undefined;
-  }
-  if (user.accessToken && user.usertoken === user.accessToken) {
-    return undefined;
-  }
-  return user.usertoken;
-}
-
 function getCurrentAccessToken(user: StoredUser | null): string | undefined {
   if (user?.accessToken?.trim()) {
     return user.accessToken.trim();
@@ -217,7 +217,9 @@ function toBearerHeader(token: string): string {
   return token.startsWith("Bearer ") ? token : `Bearer ${token}`;
 }
 
-async function refreshAccessToken(refreshToken: string): Promise<DeviceTokenResponse> {
+async function refreshAccessToken(
+  refreshToken: string,
+): Promise<DeviceTokenResponse> {
   const body = new URLSearchParams();
   body.set("grant_type", "refresh_token");
   body.set("refresh_token", refreshToken);
@@ -237,12 +239,9 @@ async function refreshAccessToken(refreshToken: string): Promise<DeviceTokenResp
   );
 }
 
-async function ensureAuthenticatedUser(
-  explicitToken?: string,
-): Promise<{
+async function ensureAuthenticatedUser(explicitToken?: string): Promise<{
   storedUser: StoredUser | null;
-  accessToken?: string;
-  legacyToken?: string;
+  accessToken: string;
 }> {
   if (explicitToken?.trim()) {
     return {
@@ -253,14 +252,15 @@ async function ensureAuthenticatedUser(
 
   const storedUser = getStoredUser();
   if (!storedUser) {
-    throw new Error("登录信息已过期，请重新登录");
+    throw new Error(AUTH_SESSION_EXPIRED_MESSAGE);
   }
 
   const currentAccessToken = getCurrentAccessToken(storedUser);
   if (currentAccessToken) {
     if (storedUser.refreshToken && isAccessTokenExpiring(storedUser)) {
       const refreshed = await refreshAccessToken(storedUser.refreshToken);
-      if (!refreshed.access_token) {
+      const accessToken = refreshed.access_token;
+      if (!accessToken) {
         clearStoredUser();
         throw new Error(
           getOAuthErrorMessage(refreshed, "登录信息已过期，请重新登录"),
@@ -268,38 +268,33 @@ async function ensureAuthenticatedUser(
       }
       const updatedUser: StoredUser = {
         ...storedUser,
-        accessToken: refreshed.access_token,
+        accessToken,
         refreshToken: refreshed.refresh_token || storedUser.refreshToken,
         accessTokenExpiresAt: refreshed.expires_in
           ? Date.now() + refreshed.expires_in * 1000
           : storedUser.accessTokenExpiresAt,
         tokenType: refreshed.token_type || storedUser.tokenType || "Bearer",
       };
-      saveStoredUser(updatedUser);
+      saveStoredUser(updatedUser, getStoredUserPersistence());
       return {
         storedUser: updatedUser,
-        accessToken: updatedUser.accessToken,
-        legacyToken: getLegacyApiToken(updatedUser),
+        accessToken,
       };
     }
 
     return {
       storedUser,
       accessToken: currentAccessToken,
-      legacyToken: getLegacyApiToken(storedUser),
-    };
-  }
-
-  const legacyToken = getLegacyApiToken(storedUser);
-  if (legacyToken) {
-    return {
-      storedUser,
-      legacyToken,
     };
   }
 
   clearStoredUser();
-  throw new Error("登录信息已过期，请重新登录");
+  throw new Error(AUTH_SESSION_EXPIRED_MESSAGE);
+}
+
+async function getAuthorization(token?: string): Promise<string> {
+  const { accessToken } = await ensureAuthenticatedUser(token);
+  return toBearerHeader(accessToken);
 }
 
 async function oauthRequest(options: {
@@ -402,6 +397,12 @@ async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
         }
         throw new Error(data?.msg || "请求失败");
       }
+    } catch (error) {
+      if (hasAuthorizationHeader(headersObj) && isAuthenticationError(error)) {
+        clearStoredUser();
+        throw new Error(AUTH_SESSION_EXPIRED_MESSAGE);
+      }
+      throw error;
     } finally {
       pendingRequests.delete(key);
     }
@@ -410,30 +411,6 @@ async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
   pendingRequests.set(key, promise);
   return promise;
 }
-
-export const getStoredUser = (): StoredUser | null => {
-  if (!isBrowser) return null;
-  const saved = localStorage.getItem("chmlfrp_user");
-  if (!saved) return null;
-  try {
-    return normalizeStoredUser(JSON.parse(saved) as StoredUser);
-  } catch {
-    return null;
-  }
-};
-
-export const saveStoredUser = (user: StoredUser) => {
-  if (!isBrowser) return;
-  localStorage.setItem(
-    "chmlfrp_user",
-    JSON.stringify(normalizeStoredUser(user)),
-  );
-};
-
-export const clearStoredUser = () => {
-  if (!isBrowser) return;
-  localStorage.removeItem("chmlfrp_user");
-};
 
 export async function login(
   username: string,
@@ -540,10 +517,7 @@ export async function loginWithAccessToken(
 }
 
 export async function fetchTunnels(token?: string): Promise<Tunnel[]> {
-  const { accessToken, legacyToken } = await ensureAuthenticatedUser(token);
-  const authorization = accessToken
-    ? toBearerHeader(accessToken)
-    : toBearerHeader(legacyToken!);
+  const authorization = await getAuthorization(token);
 
   const data = await request<Tunnel[]>("/tunnel", {
     headers: { authorization },
@@ -554,10 +528,7 @@ export async function fetchTunnels(token?: string): Promise<Tunnel[]> {
 }
 
 export async function fetchFlowLast7Days(token?: string): Promise<FlowPoint[]> {
-  const { accessToken, legacyToken } = await ensureAuthenticatedUser(token);
-  const authorization = accessToken
-    ? toBearerHeader(accessToken)
-    : toBearerHeader(legacyToken!);
+  const authorization = await getAuthorization(token);
 
   const data = await request<FlowPoint[]>("/flow_last_7_days", {
     headers: { authorization },
@@ -568,10 +539,7 @@ export async function fetchFlowLast7Days(token?: string): Promise<FlowPoint[]> {
 }
 
 export async function fetchUserInfo(token?: string): Promise<UserInfo> {
-  const { accessToken, legacyToken } = await ensureAuthenticatedUser(token);
-  const authorization = accessToken
-    ? toBearerHeader(accessToken)
-    : toBearerHeader(legacyToken!);
+  const authorization = await getAuthorization(token);
 
   const data = await request<UserInfo>("/userinfo", {
     headers: { authorization },
@@ -582,10 +550,7 @@ export async function fetchUserInfo(token?: string): Promise<UserInfo> {
 }
 
 export async function fetchSignInInfo(token?: string): Promise<SignInInfo> {
-  const { accessToken, legacyToken } = await ensureAuthenticatedUser(token);
-  const authorization = accessToken
-    ? toBearerHeader(accessToken)
-    : toBearerHeader(legacyToken!);
+  const authorization = await getAuthorization(token);
 
   const data = await request<SignInInfo>("/qiandao_info", {
     headers: { authorization },
@@ -605,10 +570,7 @@ export async function offlineTunnel(
   tunnelName: string,
   token?: string,
 ): Promise<void> {
-  const { accessToken, legacyToken } = await ensureAuthenticatedUser(token);
-  const authorization = accessToken
-    ? toBearerHeader(accessToken)
-    : toBearerHeader(legacyToken!);
+  const authorization = await getAuthorization(token);
 
   const formData = new URLSearchParams();
   formData.append("tunnel_name", tunnelName);
@@ -671,10 +633,7 @@ export async function deleteTunnel(
   tunnelId: number,
   token?: string,
 ): Promise<void> {
-  const { accessToken, legacyToken } = await ensureAuthenticatedUser(token);
-  const authorization = accessToken
-    ? toBearerHeader(accessToken)
-    : toBearerHeader(legacyToken!);
+  const authorization = await getAuthorization(token);
 
   await request<unknown>(`/delete_tunnel?tunnelid=${tunnelId}`, {
     headers: { authorization },
@@ -788,10 +747,7 @@ export interface UpdateTunnelParams {
 }
 
 export async function fetchNodes(token?: string): Promise<Node[]> {
-  const { accessToken, legacyToken } = await ensureAuthenticatedUser(token);
-  const authorization = accessToken
-    ? toBearerHeader(accessToken)
-    : toBearerHeader(legacyToken!);
+  const authorization = await getAuthorization(token);
 
   const data = await request<Node[]>("/node", {
     headers: { authorization },
@@ -830,10 +786,7 @@ export async function fetchNodeInfo(
   nodeName: string,
   token?: string,
 ): Promise<NodeInfo> {
-  const { accessToken, legacyToken } = await ensureAuthenticatedUser(token);
-  const authorization = accessToken
-    ? toBearerHeader(accessToken)
-    : toBearerHeader(legacyToken!);
+  const authorization = await getAuthorization(token);
 
   const data = await request<NodeInfo>(
     `/nodeinfo?node=${encodeURIComponent(nodeName)}`,
@@ -850,10 +803,7 @@ export async function createTunnel(
   params: CreateTunnelParams,
   token?: string,
 ): Promise<void> {
-  const { accessToken, legacyToken } = await ensureAuthenticatedUser(token);
-  const authorization = accessToken
-    ? toBearerHeader(accessToken)
-    : toBearerHeader(legacyToken!);
+  const authorization = await getAuthorization(token);
 
   await request<unknown>("/create_tunnel", {
     method: "POST",
@@ -869,10 +819,7 @@ export async function updateTunnel(
   params: UpdateTunnelParams,
   token?: string,
 ): Promise<void> {
-  const { accessToken, legacyToken } = await ensureAuthenticatedUser(token);
-  const authorization = accessToken
-    ? toBearerHeader(accessToken)
-    : toBearerHeader(legacyToken!);
+  const authorization = await getAuthorization(token);
 
   await request<unknown>("/update_tunnel", {
     method: "POST",

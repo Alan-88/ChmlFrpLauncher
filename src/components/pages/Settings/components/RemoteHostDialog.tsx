@@ -60,7 +60,7 @@ export function RemoteHostDialog({
               id="remote-host-name"
               value={input.name}
               onChange={(event) => updateInput("name", event.target.value)}
-              placeholder="家用服务器"
+              placeholder="远程运行主机"
               disabled={saving}
               required
             />

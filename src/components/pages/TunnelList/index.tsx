@@ -54,7 +54,7 @@ export function TunnelList({ user }: TunnelListProps) {
     runningTunnels,
     setRunningTunnels,
     refreshTunnels,
-  } = useTunnelList();
+  } = useTunnelList(user);
 
   const apiTunnels = useMemo(
     () => tunnels.filter((t) => t.type === "api").map((t) => t.data),

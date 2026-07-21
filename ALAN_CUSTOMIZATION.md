@@ -26,6 +26,7 @@
 - `src/services/api.ts` 仅引用该配置，仍使用设备码授权。
 - 请求权限域：`profile email offline_access chmlfrp_api`。
 - 不在代码、日志或文档中记录 access token、refresh token 或 client secret。
+- 本地会话只接受 OAuth access token；旧版仅保存 `usertoken` 的缓存会被清除，需重新授权一次。
 
 ## 后续扩展约定
 

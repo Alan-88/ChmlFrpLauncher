@@ -75,7 +75,7 @@ export class FrpcManager {
     }
 
     if (kcpOptimization) {
-      const udpSupport = await getNodeUdpSupport(tunnel.node, userToken);
+      const udpSupport = await getNodeUdpSupport(tunnel.node);
       if (udpSupport !== true) {
         kcpOptimization = false;
       }
@@ -134,7 +134,9 @@ export class FrpcManager {
 
   async getPersistedRunningTunnels(): Promise<PersistedTunnelInfo[]> {
     try {
-      return await invoke<PersistedTunnelInfo[]>("get_persisted_running_tunnels");
+      return await invoke<PersistedTunnelInfo[]>(
+        "get_persisted_running_tunnels",
+      );
     } catch {
       return [];
     }

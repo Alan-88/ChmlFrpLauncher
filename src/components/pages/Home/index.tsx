@@ -1,4 +1,3 @@
-import { useUserInfo } from "./hooks/useUserInfo";
 import { useFlowData } from "./hooks/useFlowData";
 import { useSignInInfo } from "./hooks/useSignInInfo";
 import { useAnimatedNumber } from "./hooks/useAnimatedNumber";
@@ -10,8 +9,7 @@ import { FeedbackCard } from "./components/FeedbackCard";
 import { CommunityGroups } from "./components/CommunityGroups";
 import type { HomeProps } from "./types";
 
-export function Home({ user, onUserChange }: HomeProps) {
-  const { userInfo } = useUserInfo(user, onUserChange);
+export function Home({ userInfo }: HomeProps) {
   const { flowData, flowLoading, flowError } = useFlowData(userInfo);
   const {
     signInInfo,
