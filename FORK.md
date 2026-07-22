@@ -23,11 +23,13 @@
 ### 第三方 OAuth 登录
 
 - OAuth 公开客户端配置位于 `src/services/oauthConfig.ts`。
+- 默认值保持为上游 `v0.7.5` 的公开客户端；本地开发可在未提交的 `.env.local` 以 `VITE_CHMLFRP_OAUTH_CLIENT_ID` 覆盖。
 - 使用设备码授权；客户端没有、也不应包含 client secret。
 - 请求权限域：`profile email offline_access chmlfrp_api`。
 - 不在代码、日志或文档中记录 access token、refresh token 或 client secret。
 - 本地会话只接受 OAuth access token；旧版仅保存 `usertoken` 的缓存会被清除，需重新授权一次。
-- 此客户端登记在个人 fork 名下，不能随上游 PR 一同提交；上游应维护自己的 OAuth 客户端身份。
+- 切换客户端 ID 会使本地会话按 `oauthClientId` 重新校验，需重新授权一次。
+- 上游 OAuth 客户端的存在不表示本 fork 获得官方支持或发布授权。
 
 ### SSH 远程运行器
 

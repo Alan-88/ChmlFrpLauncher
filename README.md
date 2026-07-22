@@ -15,7 +15,7 @@
 
 ## 使用前请注意
 
-- 此 fork 使用单独登记的 OAuth 公开客户端，不要把它当作官方客户端或向官方渠道索取该 fork 的支持。
+- 源码默认保留上游的 OAuth 公开客户端配置；本地维护者可用 `.env.local` 中的 `VITE_CHMLFRP_OAUTH_CLIENT_ID` 覆盖。它不会让本 fork 成为官方客户端，也不要向官方渠道索取该 fork 的支持。
 - 为兼容现有本地数据，当前仍使用官方应用标识 `net.chmlfrp.launcher`，因此**不能与官方版并行安装**；两者会共用应用数据目录和 `frpc`。
 - 已主动禁用官方更新通道，避免本 fork 被官方更新覆盖。后续版本只会通过本仓库发布；目前不提供已签名或已公证的 macOS 安装包。
 - SSH 主机资料可启动远端命令。请只配置你拥有或获授权管理的主机，并妥善保护本机用户目录中的应用数据。
@@ -26,6 +26,15 @@
 pnpm install
 pnpm tauri dev
 ```
+
+如需用你自己的 OAuth 客户端进行本地开发：
+
+```bash
+cp .env.example .env.local
+# 在 .env.local 填入 VITE_CHMLFRP_OAUTH_CLIENT_ID
+```
+
+`.env.local` 不会提交到 Git；使用它构建的安装包会包含该公开 client ID，发布前请确认这是你的预期。
 
 构建本地测试包：
 
