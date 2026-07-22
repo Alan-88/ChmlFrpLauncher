@@ -82,6 +82,16 @@ fn load_hosts(app_handle: &tauri::AppHandle) -> Result<Vec<RemoteHost>, String> 
     serde_json::from_str(&content).map_err(|error| format!("解析运行主机配置失败: {error}"))
 }
 
+pub(crate) fn get_remote_host(
+    app_handle: &tauri::AppHandle,
+    host_id: &str,
+) -> Result<RemoteHost, String> {
+    load_hosts(app_handle)?
+        .into_iter()
+        .find(|host| host.id == host_id)
+        .ok_or_else(|| "要使用的运行主机不存在".to_string())
+}
+
 fn save_hosts(app_handle: &tauri::AppHandle, hosts: &[RemoteHost]) -> Result<(), String> {
     let path = hosts_path(app_handle)?;
     let parent = path
@@ -310,6 +320,9 @@ pub fn save_remote_host(
 
 #[tauri::command]
 pub fn delete_remote_host(app_handle: tauri::AppHandle, host_id: String) -> Result<(), String> {
+    if super::runs::host_has_active_run(&app_handle, &host_id) {
+        return Err("该运行主机仍有运行中的隧道，请先停止隧道".to_string());
+    }
     let mut hosts = load_hosts(&app_handle)?;
     let count_before = hosts.len();
     hosts.retain(|host| host.id != host_id);

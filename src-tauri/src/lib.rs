@@ -96,7 +96,10 @@ pub fn run() {
                         }
                     }
                     "quit" => {
-                        app.exit(0);
+                        let app = app.clone();
+                        tauri::async_runtime::spawn(async move {
+                            commands::quit_app(app).await;
+                        });
                     }
                     _ => {}
                 })
@@ -247,6 +250,14 @@ pub fn run() {
             extensions::remote_runner::hosts::save_remote_host,
             extensions::remote_runner::hosts::delete_remote_host,
             extensions::remote_runner::hosts::test_remote_host,
+            extensions::remote_runner::runs::get_tunnel_runner_preferences,
+            extensions::remote_runner::runs::set_tunnel_runner_preference,
+            extensions::remote_runner::runs::get_remote_runs,
+            extensions::remote_runner::runs::sync_remote_runs,
+            extensions::remote_runner::runs::start_remote_api_frpc,
+            extensions::remote_runner::runs::start_remote_custom_frpc,
+            extensions::remote_runner::runs::stop_remote_frpc,
+            extensions::remote_runner::runs::stop_all_remote_frpcs,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

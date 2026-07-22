@@ -14,6 +14,7 @@ import { toast } from "sonner";
 import { useTunnelList } from "./hooks/useTunnelList";
 import { useTunnelProgress } from "./hooks/useTunnelProgress";
 import { useTunnelToggle } from "./hooks/useTunnelToggle";
+import { useTunnelRunners } from "./hooks/useTunnelRunners";
 import { TunnelCard } from "./components/TunnelCard";
 import { CreateTunnelDialog } from "./components/CreateTunnelDialog";
 import { EditTunnelDialog } from "./components/EditTunnelDialog";
@@ -54,7 +55,11 @@ export function TunnelList({ user }: TunnelListProps) {
     runningTunnels,
     setRunningTunnels,
     refreshTunnels,
+    refreshRunningStatus,
   } = useTunnelList(user);
+
+  const { hosts, getRunner, getRun, setRunner } =
+    useTunnelRunners(refreshRunningStatus);
 
   const apiTunnels = useMemo(
     () => tunnels.filter((t) => t.type === "api").map((t) => t.data),
@@ -69,6 +74,7 @@ export function TunnelList({ user }: TunnelListProps) {
     setRunningTunnels,
     timeoutRefs,
     successTimeoutRefs,
+    getRunner,
   });
 
   const handleOpenCreateDialog = useCallback(async () => {
@@ -244,6 +250,18 @@ export function TunnelList({ user }: TunnelListProps) {
                   onToggle={handleToggle}
                   onRefresh={refreshTunnels}
                   onEdit={handleEdit}
+                  runner={getRunner(tunnel)}
+                  runnerHosts={hosts}
+                  remoteRun={getRun(tunnel)}
+                  onRunnerChange={(runner) => {
+                    void setRunner(tunnel, runner).catch((error) => {
+                      toast.error(
+                        error instanceof Error
+                          ? error.message
+                          : "切换运行主机失败",
+                      );
+                    });
+                  }}
                 />
               );
             })}

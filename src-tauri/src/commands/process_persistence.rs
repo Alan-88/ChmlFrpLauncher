@@ -62,6 +62,41 @@ pub fn remove_running_tunnel(
     write_persisted_tunnels(&path, &tunnels)
 }
 
+pub(crate) fn stop_all_local_tunnels(
+    app_handle: &tauri::AppHandle,
+    processes: &FrpcProcesses,
+) -> Result<(), String> {
+    let mut errors = Vec::new();
+
+    if let Ok(mut managed) = processes.processes.lock() {
+        for (_, mut child) in managed.drain() {
+            if let Err(error) = child.kill() {
+                errors.push(format!("停止本地 frpc 失败: {error}"));
+            }
+            let _ = child.wait();
+        }
+    } else {
+        errors.push("获取本地 frpc 进程锁失败".to_string());
+    }
+
+    let path = get_persistence_path(app_handle)?;
+    let tunnels = load_persisted_tunnels_from_file(&path);
+    for info in tunnels.values() {
+        if is_process_alive(info.pid) {
+            if let Err(error) = kill_process_by_pid(info.pid) {
+                errors.push(error);
+            }
+        }
+    }
+    write_persisted_tunnels(&path, &HashMap::new())?;
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("；"))
+    }
+}
+
 /// 从磁盘读取隧道信息
 fn load_persisted_tunnels_from_file(
     path: &PathBuf,

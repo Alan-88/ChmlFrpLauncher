@@ -2,6 +2,10 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { fetchTunnels, type StoredUser, type Tunnel } from "@/services/api";
 import { frpcManager } from "@/services/frpcManager";
 import { customTunnelService } from "@/services/customTunnelService";
+import {
+  remoteRunnerService,
+  type RunnerTarget,
+} from "@/services/remoteRunnerService";
 import { tunnelListCache } from "../cache";
 import type { UnifiedTunnel } from "../types";
 
@@ -28,6 +32,17 @@ export function useTunnelList(user: StoredUser | null) {
     async (currentTunnels?: UnifiedTunnel[]) => {
       const tunnelsToCheck = currentTunnels || tunnelsRef.current;
       const running = new Set<string>();
+      const [preferences, remoteRuns] = await Promise.all([
+        remoteRunnerService
+          .getPreferences()
+          .catch((): Record<string, RunnerTarget> => ({})),
+        remoteRunnerService.getRuns().catch(() => []),
+      ]);
+      const activeRemoteKeys = new Set(
+        remoteRuns
+          .filter((run) => run.status !== "stopped")
+          .map((run) => run.tunnel_key),
+      );
 
       const withTimeout = (promise: Promise<boolean>, timeoutMs: number) =>
         new Promise<boolean>((resolve) => {
@@ -45,6 +60,15 @@ export function useTunnelList(user: StoredUser | null) {
 
       await Promise.all(
         tunnelsToCheck.map(async (tunnel) => {
+          const tunnelKey =
+            tunnel.type === "api"
+              ? `api_${tunnel.data.id}`
+              : `custom_${tunnel.data.id}`;
+          if (preferences[tunnelKey]?.kind === "remote") {
+            if (activeRemoteKeys.has(tunnelKey)) running.add(tunnelKey);
+            return;
+          }
+
           if (tunnel.type === "api") {
             const isRunning = await withTimeout(
               frpcManager.isTunnelRunning(tunnel.data.id),
@@ -188,5 +212,6 @@ export function useTunnelList(user: StoredUser | null) {
     runningTunnels,
     setRunningTunnels,
     refreshTunnels: loadTunnels,
+    refreshRunningStatus: checkRunningStatus,
   };
 }

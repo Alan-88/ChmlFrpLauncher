@@ -2,6 +2,7 @@ pub mod autostart;
 pub mod background;
 pub mod custom_tunnel;
 pub mod download;
+pub mod frpc_config;
 pub mod http;
 pub mod ping;
 pub mod ports;

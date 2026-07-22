@@ -34,77 +34,76 @@ export interface PersistedTunnelInfo {
   started_at: string;
 }
 
+function parseRemotePort(rawPort?: string): number | undefined {
+  if (!rawPort) return undefined;
+  const parsed = Number.parseInt(rawPort, 10);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
+    throw new Error(`无效的远程端口: ${rawPort}`);
+  }
+  return parsed;
+}
+
+export async function buildTunnelConfig(
+  tunnel: Tunnel,
+  userToken: string,
+): Promise<TunnelConfig> {
+  let httpProxy: string | undefined;
+  let forceTls = false;
+  let kcpOptimization = false;
+
+  try {
+    const proxyConfigStr = localStorage.getItem("frpc_proxy_config");
+    if (proxyConfigStr) {
+      const proxyConfig = JSON.parse(proxyConfigStr);
+      if (proxyConfig.enabled && proxyConfig.host && proxyConfig.port) {
+        const auth =
+          proxyConfig.username && proxyConfig.password
+            ? `${proxyConfig.username}:${proxyConfig.password}@`
+            : "";
+        httpProxy = `${proxyConfig.type}://${auth}${proxyConfig.host}:${proxyConfig.port}`;
+      }
+      forceTls = proxyConfig.forceTls || false;
+      kcpOptimization = proxyConfig.kcpOptimization || false;
+    }
+  } catch (error) {
+    console.error("解析代理配置失败:", error);
+  }
+
+  if (kcpOptimization) {
+    const udpSupport = await getNodeUdpSupport(tunnel.node);
+    if (udpSupport !== true) kcpOptimization = false;
+  }
+
+  return {
+    tunnel_id: tunnel.id,
+    tunnel_name: tunnel.name,
+    user_token: userToken,
+    server_addr: tunnel.node_ip,
+    server_port: tunnel.server_port,
+    node_token: tunnel.node_token,
+    tunnel_type: tunnel.type,
+    local_ip: tunnel.localip,
+    local_port: tunnel.nport,
+    remote_port:
+      tunnel.type === "tcp" || tunnel.type === "udp"
+        ? parseRemotePort(tunnel.dorp)
+        : undefined,
+    custom_domains:
+      tunnel.type === "http" || tunnel.type === "https"
+        ? tunnel.dorp
+        : undefined,
+    http_proxy: httpProxy,
+    log_level: localStorage.getItem("frpcLogLevel") || "info",
+    force_tls: forceTls,
+    kcp_optimization: kcpOptimization,
+  };
+}
+
 export class FrpcManager {
   private unlisten?: UnlistenFn;
 
-  private parseRemotePort(rawPort?: string): number | undefined {
-    if (!rawPort) return undefined;
-    const parsed = Number.parseInt(rawPort, 10);
-    if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
-      throw new Error(`无效的远程端口: ${rawPort}`);
-    }
-    return parsed;
-  }
-
   async startTunnel(tunnel: Tunnel, userToken: string): Promise<string> {
-    // 获取代理配置
-    let httpProxy: string | undefined;
-    let forceTls = false;
-    let kcpOptimization = false;
-
-    try {
-      const proxyConfigStr = localStorage.getItem("frpc_proxy_config");
-      if (proxyConfigStr) {
-        const proxyConfig = JSON.parse(proxyConfigStr);
-
-        // 代理配置
-        if (proxyConfig.enabled && proxyConfig.host && proxyConfig.port) {
-          const auth =
-            proxyConfig.username && proxyConfig.password
-              ? `${proxyConfig.username}:${proxyConfig.password}@`
-              : "";
-          httpProxy = `${proxyConfig.type}://${auth}${proxyConfig.host}:${proxyConfig.port}`;
-        }
-
-        // 其他配置
-        forceTls = proxyConfig.forceTls || false;
-        kcpOptimization = proxyConfig.kcpOptimization || false;
-      }
-    } catch (error) {
-      console.error("解析代理配置失败:", error);
-    }
-
-    if (kcpOptimization) {
-      const udpSupport = await getNodeUdpSupport(tunnel.node);
-      if (udpSupport !== true) {
-        kcpOptimization = false;
-      }
-    }
-
-    const config: TunnelConfig = {
-      tunnel_id: tunnel.id,
-      tunnel_name: tunnel.name,
-      user_token: userToken,
-      server_addr: tunnel.node_ip,
-      server_port: tunnel.server_port,
-      node_token: tunnel.node_token,
-      tunnel_type: tunnel.type,
-      local_ip: tunnel.localip,
-      local_port: tunnel.nport,
-      remote_port:
-        tunnel.type === "tcp" || tunnel.type === "udp"
-          ? this.parseRemotePort(tunnel.dorp)
-          : undefined,
-      custom_domains:
-        tunnel.type === "http" || tunnel.type === "https"
-          ? tunnel.dorp
-          : undefined,
-      http_proxy: httpProxy,
-      log_level: localStorage.getItem("frpcLogLevel") || "info",
-      force_tls: forceTls,
-      kcp_optimization: kcpOptimization,
-    };
-
+    const config = await buildTunnelConfig(tunnel, userToken);
     return await invoke<string>("start_frpc", { config });
   }
 

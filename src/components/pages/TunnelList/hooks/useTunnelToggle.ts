@@ -2,9 +2,14 @@ import { useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { toast } from "sonner";
 import { getStoredUser } from "@/services/api";
-import { frpcManager } from "@/services/frpcManager";
-import { customTunnelService } from "@/services/customTunnelService";
 import { logStore } from "@/services/logStore";
+import type { RunnerTarget } from "@/services/remoteRunnerService";
+import {
+  getTunnelKey,
+  getTunnelLogId,
+  startTunnelOnRunner,
+  stopTunnelOnRunner,
+} from "@/services/tunnelRunnerService";
 import type { TunnelProgress, UnifiedTunnel } from "../types";
 
 interface UseTunnelToggleProps {
@@ -16,6 +21,7 @@ interface UseTunnelToggleProps {
   successTimeoutRefs: React.MutableRefObject<
     Map<string, ReturnType<typeof setTimeout>>
   >;
+  getRunner: (tunnel: UnifiedTunnel) => RunnerTarget;
 }
 
 export function useTunnelToggle({
@@ -23,16 +29,14 @@ export function useTunnelToggle({
   setRunningTunnels,
   timeoutRefs,
   successTimeoutRefs,
+  getRunner,
 }: UseTunnelToggleProps) {
   const [togglingTunnels, setTogglingTunnels] = useState<Set<string>>(
     new Set(),
   );
 
   const handleToggle = async (tunnel: UnifiedTunnel, enabled: boolean) => {
-    const tunnelKey =
-      tunnel.type === "api"
-        ? `api_${tunnel.data.id}`
-        : `custom_${tunnel.data.id}`;
+    const tunnelKey = getTunnelKey(tunnel);
 
     const tunnelName =
       tunnel.type === "api" ? tunnel.data.name : tunnel.data.name;
@@ -64,29 +68,18 @@ export function useTunnelToggle({
           return next;
         });
 
-        let message: string;
-        if (tunnel.type === "api") {
-          const user = getStoredUser();
-          message = await frpcManager.startTunnel(
-            tunnel.data,
-            user!.usertoken!,
-          );
-        } else {
-          message = await customTunnelService.startCustomTunnel(tunnel.data.id);
-        }
+        const message = await startTunnelOnRunner(
+          tunnel,
+          getStoredUser()?.usertoken,
+          getRunner(tunnel),
+        );
 
         toast.success(message || `隧道 ${tunnelName} 已启动`);
         setRunningTunnels((prev) => new Set(prev).add(tunnelKey));
       } else {
-        let message: string;
-        if (tunnel.type === "api") {
-          message = await frpcManager.stopTunnel(tunnel.data.id);
-        } else {
-          message = await customTunnelService.stopCustomTunnel(tunnel.data.id);
-        }
+        const message = await stopTunnelOnRunner(tunnel, getRunner(tunnel));
 
-        const logTunnelId =
-          tunnel.type === "api" ? tunnel.data.id : tunnel.data.hashed_id;
+        const logTunnelId = getTunnelLogId(tunnel);
         if (typeof logTunnelId === "number" && Number.isFinite(logTunnelId)) {
           const timestamp = new Date()
             .toLocaleString("zh-CN", {

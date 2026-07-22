@@ -1,8 +1,15 @@
 import { clearStoredUser } from "./api";
 import { customTunnelService } from "./customTunnelService";
 import { frpcManager } from "./frpcManager";
+import { remoteRunnerService } from "./remoteRunnerService";
 
 export async function stopAllRunningTunnels(): Promise<void> {
+  try {
+    await remoteRunnerService.stopAll();
+  } catch (error) {
+    console.error("停止远程隧道失败，将等待租约到期:", error);
+  }
+
   try {
     const runningApiIds = await frpcManager.getRunningTunnels();
     await Promise.all(

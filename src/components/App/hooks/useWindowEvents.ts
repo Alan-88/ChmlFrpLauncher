@@ -1,4 +1,11 @@
 import { useState, useEffect } from "react";
+import { stopAllRunningTunnels } from "@/services/logout";
+
+async function quitWithTunnelCleanup() {
+  await stopAllRunningTunnels();
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("quit_app");
+}
 
 /**
  * 窗口事件处理 hook
@@ -23,8 +30,7 @@ export function useWindowEvents() {
 
     const handleCloseApp = async () => {
       try {
-        const { invoke } = await import("@tauri-apps/api/core");
-        await invoke("quit_app");
+        await quitWithTunnelCleanup();
       } catch (error) {
         console.error("Failed to close app:", error);
       }
@@ -72,7 +78,7 @@ export function useWindowEvents() {
               }
             } else {
               try {
-                await invoke("quit_app");
+                await quitWithTunnelCleanup();
               } catch (error) {
                 console.error("Failed to quit app:", error);
               }

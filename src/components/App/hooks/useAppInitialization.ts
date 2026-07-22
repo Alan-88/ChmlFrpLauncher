@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { logStore } from "@/services/logStore";
+import { remoteRunnerService } from "@/services/remoteRunnerService";
 
 /**
  * 应用初始化逻辑 hook
@@ -21,6 +22,33 @@ export function useAppInitialization() {
     };
 
     initProcessGuard();
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    let syncing = false;
+
+    const syncRemoteRuns = async () => {
+      if (syncing) return;
+      syncing = true;
+      try {
+        await remoteRunnerService.syncRuns();
+      } catch (error) {
+        if (!disposed) {
+          console.error("同步远程隧道状态失败:", error);
+        }
+      } finally {
+        syncing = false;
+      }
+    };
+
+    void syncRemoteRuns();
+    const interval = window.setInterval(syncRemoteRuns, 45_000);
+
+    return () => {
+      disposed = true;
+      window.clearInterval(interval);
+    };
   }, []);
 
   useEffect(() => {
