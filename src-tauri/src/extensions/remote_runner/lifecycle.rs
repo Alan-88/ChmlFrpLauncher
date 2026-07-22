@@ -25,7 +25,7 @@ fn remote_write_file(
     mode: &str,
 ) -> Result<(), String> {
     let command = format!(
-        "umask 077; cat > {path}; chmod {mode} -- {path}",
+        "umask 077; cat > {path}; chmod {mode} {path}",
         path = shell_quote(path),
         mode = shell_quote(mode),
     );
@@ -54,7 +54,7 @@ pub(crate) fn setup_remote_run(
     let expires_at = Utc::now().timestamp() + LEASE_SECONDS;
 
     let prepare_command = format!(
-        "umask 077; mkdir -p -- {directory}; chmod 700 -- {directory}; printf '%s\\n' {run_id} > {run_id_path}; printf '%s\\n' {expires_at} > {lease_path}; : > {log_path}",
+        "umask 077; mkdir -p {directory}; chmod 700 {directory}; printf '%s\\n' {run_id} > {run_id_path}; printf '%s\\n' {expires_at} > {lease_path}; : > {log_path}",
         directory = shell_quote(&directory),
         run_id = shell_quote(&run.run_id),
         run_id_path = shell_quote(&run_id_path),

@@ -174,12 +174,18 @@ fn start_remote_run(
         unreachable_since: None,
         message: None,
     };
-    run.wrapper_pid = Some(setup_remote_run(
-        &host,
-        &run,
-        &config_content,
-        guard_enabled,
-    )?);
+    run.wrapper_pid = match setup_remote_run(&host, &run, &config_content, guard_enabled) {
+        Ok(pid) => Some(pid),
+        Err(error) => {
+            let _ = stop_remote_process(&host, &run);
+            emit_log(
+                app_handle,
+                run.tunnel_id,
+                format!("[E] [ChmlFrpLauncher] 远程启动失败：{}", error),
+            );
+            return Err(error);
+        }
+    };
     runs.push(run.clone());
     save_runs(app_handle, &runs)?;
     emit_log(
