@@ -84,6 +84,7 @@ fn bundled_frpc_candidates(app_handle: &tauri::AppHandle) -> Vec<PathBuf> {
 
     if let Ok(resource_dir) = app_handle.path().resource_dir() {
         candidates.push(resource_dir.join(file_name));
+        candidates.push(resource_dir.join("resources").join(file_name));
     }
 
     if let Ok(exe_path) = std::env::current_exe() {
