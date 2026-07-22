@@ -2,6 +2,10 @@ import { check, type DownloadEvent } from "@tauri-apps/plugin-updater";
 import { getVersion } from "@tauri-apps/api/app";
 import { flushSync } from "react-dom";
 
+export const FORK_UPDATES_ENABLED = false;
+export const FORK_UPDATE_DISABLED_MESSAGE =
+  "此个人 fork 尚未配置独立更新源，请从本仓库获取后续版本。";
+
 export interface UpdateInfo {
   version: string;
   date?: string;
@@ -19,6 +23,10 @@ export class UpdateService {
     date?: string;
     body?: string;
   }> {
+    if (!FORK_UPDATES_ENABLED) {
+      throw new Error(FORK_UPDATE_DISABLED_MESSAGE);
+    }
+
     try {
       const update = await check({
         headers: {},
@@ -46,6 +54,10 @@ export class UpdateService {
    * @param onProgress 下载进度回调函数
    */
   async installUpdate(onProgress?: (progress: number) => void): Promise<void> {
+    if (!FORK_UPDATES_ENABLED) {
+      throw new Error(FORK_UPDATE_DISABLED_MESSAGE);
+    }
+
     try {
       const update = await check({
         headers: {},
@@ -81,7 +93,7 @@ export class UpdateService {
    * 获取自动检测更新设置
    */
   getAutoCheckEnabled(): boolean {
-    if (typeof window === "undefined") return true;
+    if (!FORK_UPDATES_ENABLED || typeof window === "undefined") return false;
     const stored = localStorage.getItem("autoCheckUpdate");
     return stored !== "false"; // 默认为 true
   }
@@ -90,7 +102,7 @@ export class UpdateService {
    * 设置自动检测更新
    */
   setAutoCheckEnabled(enabled: boolean): void {
-    if (typeof window === "undefined") return;
+    if (!FORK_UPDATES_ENABLED || typeof window === "undefined") return;
     localStorage.setItem("autoCheckUpdate", enabled ? "true" : "false");
   }
 

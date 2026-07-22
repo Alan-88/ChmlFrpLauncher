@@ -1,13 +1,13 @@
-# Alan 的 ChmlFrp Launcher 扩展说明
+# Fork 说明
 
-这份文档只记录此本地 fork 相对
+这份文档记录此个人 fork 相对
 [TechCat-Team/ChmlFrpLauncher](https://github.com/TechCat-Team/ChmlFrpLauncher)
-的改动；上游 README 与功能说明保持原样。
+的改动与运行边界。它不是官方功能承诺，也不是面向上游 PR 的设计文档。
 
 ## 上游基线
 
-- 上游提交：`f2633b0`（2026-05-21）
-- 本地自定义基线分支：`alan/base`
+- 上游提交：`f2633b0`（`v0.7.5`，2026-05-21）
+- 当前 fork 首个稳定提交：`5db06b3`
 
 ## frpc 核心程序位置
 
@@ -23,10 +23,11 @@
 ### 第三方 OAuth 登录
 
 - OAuth 公开客户端配置位于 `src/services/oauthConfig.ts`。
-- `src/services/api.ts` 仅引用该配置，仍使用设备码授权。
+- 使用设备码授权；客户端没有、也不应包含 client secret。
 - 请求权限域：`profile email offline_access chmlfrp_api`。
 - 不在代码、日志或文档中记录 access token、refresh token 或 client secret。
 - 本地会话只接受 OAuth access token；旧版仅保存 `usertoken` 的缓存会被清除，需重新授权一次。
+- 此客户端登记在个人 fork 名下，不能随上游 PR 一同提交；上游应维护自己的 OAuth 客户端身份。
 
 ### SSH 远程运行器
 
@@ -59,15 +60,17 @@
 `remoteRunnerService` 和 `tunnelRunnerService` 接入，尽量不改变上游隧道
 管理代码。
 
-## 后续扩展约定
+## 更新与发布
 
-远程运行功能作为本地扩展实现：新增代码放在独立的扩展边界中，
-上游现有文件只保留必要的接入点；不为了满足文件大小规则而重构
-与功能无关的上游实现。
+本 fork 暂未设置独立更新源。运行时会拒绝访问官方更新器，避免安装官方版本后覆盖远程运行功能。公开发布前仍需要完成相应平台的签名与公证。
+
+## 对上游贡献的边界
+
+当前实现以个人使用和可维护性为目标，文件组织不代表上游风格。若未来需要贡献上游，应从最新 `upstream/main` 新开分支，按单一、经维护者确认的主题重新实现最小改动；不要直接把本 fork 的 OAuth 配置、文档或完整远程运行器作为一个 PR 提交。
 
 ## Git 工作流
 
-- `main`：保持上游基线，便于同步和对比。
-- `alan/base`：本地自定义的稳定基线。
-- 新功能从 `alan/base` 建立 `feature/<name>` 分支，验证后合并回 `alan/base`。
-- 若未来建立个人 GitHub fork，再将其添加为独立 remote；当前 `origin` 保持上游仓库。
+- `origin`：个人 fork `Alan-88/ChmlFrpLauncher`。
+- `upstream`：官方仓库 `TechCat-Team/ChmlFrpLauncher`。
+- `main`：个人 fork 的稳定分支。
+- 新功能从 `main` 建立 `feature/<name>` 分支，验证后再合并回 `main`。

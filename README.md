@@ -1,130 +1,50 @@
-# ChmlFrp Launcher
+# ChmlFrp Launcher Remote Runner
 
-ChmlFrp 官方启动器，基于 Tauri + React + TypeScript 构建的跨平台桌面应用程序。
+> 这是 [Alan-88](https://github.com/Alan-88) 维护的个人 fork，不是 ChmlFrp 官方发行版，也不隶属于 TechCat-Team。
 
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+本项目基于 [TechCat-Team/ChmlFrpLauncher](https://github.com/TechCat-Team/ChmlFrpLauncher) 的 `v0.7.5`。它保留原启动器的隧道管理能力，并加入以 SSH 在远程主机运行 `frpc` 的功能，方便在本机与多台服务器之间统一管理隧道。
 
-## 特性
+## 与上游的主要差异
 
-### 核心功能
+- 每条隧道可持久选择在本机或已配置的 SSH 主机运行。
+- 远程运行器会管理独立的 `frpc` 进程、状态同步、日志回传和 SSH 短暂断连后的恢复。
+- 使用设备码 OAuth 登录，并在 access token 刷新时避免并发请求误清除新会话。
+- `frpc` 不再继承系统代理；是否绕过代理仍由原有设置控制。
 
-- **隧道管理**
-  - 创建、启动、停止和删除隧道
-  - 支持 HTTP、HTTPS、TCP、UDP 隧道类型
-  - 支持自定义隧道配置
-  - 隧道状态实时监控
+完整实现与运行边界见 [FORK.md](FORK.md)。
 
-- **进程守护**
-  - 自动守护进程，确保隧道稳定运行
-  - ChmlFrp 错误自动修复
+## 使用前请注意
 
-- **自动启动**
-  - 支持软件开机自启动
-  - 支持软件启动时自动启动隧道
+- 此 fork 使用单独登记的 OAuth 公开客户端，不要把它当作官方客户端或向官方渠道索取该 fork 的支持。
+- 为兼容现有本地数据，当前仍使用官方应用标识 `net.chmlfrp.launcher`，因此**不能与官方版并行安装**；两者会共用应用数据目录和 `frpc`。
+- 已主动禁用官方更新通道，避免本 fork 被官方更新覆盖。后续版本只会通过本仓库发布；目前不提供已签名或已公证的 macOS 安装包。
+- SSH 主机资料可启动远端命令。请只配置你拥有或获授权管理的主机，并妥善保护本机用户目录中的应用数据。
 
-- **深链接支持**
-  - 通过 `chmlfrp://` 协议在浏览器中启动隧道
-  - 便捷的远程访问方式
-
-### 用户体验
-
-- **现代化 UI**
-  - 毛玻璃效果（macOS HUD Window）
-  - 视频背景支持
-  - 明暗主题切换
-  - 自定义侧边栏（悬浮菜单）
-  - 响应式设计
-
-- **系统集成**
-  - 系统托盘支持
-  - 最小化到托盘
-  - 单实例运行
-  - 原生窗口控制
-
-- **实时监控**
-  - 流量统计（今日上传/下载）
-  - 连接数监控
-  - 节点延迟显示
-  - 隧道日志查看
-
-## 技术栈
-
-- **前端框架**: React 19 + TypeScript
-- **桌面框架**: Tauri 2
-- **UI 组件**: shadcn/ui
-- **样式**: Tailwind CSS 4
-- **状态管理**: React Hooks
-- **后端语言**: Rust
-
-## 系统要求
-
-- **macOS**: 需要 macOS 10.13 或更高版本
-- **Windows**: Windows 10 或更高版本
-- **Linux**: 支持的主流 Linux 发行版
-
-## 快速开始
-
-### 安装依赖
-
-使用 pnpm（推荐）:
+## 开发
 
 ```bash
 pnpm install
-```
-
-### 开发模式
-
-启动开发服务器:
-
-```bash
 pnpm tauri dev
 ```
 
-### 构建
-
-构建生产版本:
+构建本地测试包：
 
 ```bash
 pnpm tauri build
 ```
 
-## 深链接使用
+本 fork 当前以 macOS Apple Silicon 为主要测试环境。远程运行器在 Linux 上优先使用 `setsid`，在 macOS 上回退到 `nohup`；其他平台请自行验证后再用于长期服务。
 
-支持通过 `chmlfrp://` 协议在浏览器中启动隧道：
+## 分支与同步
 
-```
-chmlfrp://usertoken/start/{tunnel_id}
-或
-chmlfrp://start/{tunnel_id}
-```
+- `upstream/main`：官方上游。
+- `main`：此 fork 的稳定代码与默认分支。
+- `feature/*`：后续实验和开发分支。
 
-## 更新日志
+同步上游时先执行 `git fetch upstream`，再有选择地把 `upstream/main` 合入新的功能分支；不要把个人 OAuth 配置或整个远程运行器直接作为上游 PR 提交。
 
-详细的更新日志请查看 [CHANGELOG.md](CHANGELOG.md)
+## 上游与许可证
 
-## 许可证
+原项目、官方支持与通用问题请前往 [TechCat-Team/ChmlFrpLauncher](https://github.com/TechCat-Team/ChmlFrpLauncher)。
 
-本项目采用 Apache-2.0 许可证。详情请查看 [LICENSE](LICENSE) 文件。
-
-## 贡献
-
-欢迎提交 Issue 和 Pull Request！
-
-### Pull Request要求
-
-- 当编写代码时必须是develop分支，提交pr时必须指向develop分支
-- 当`git commit`时请遵循**Conventional Commits**规范
-
-## 联系方式
-
-- **GitHub**: [TechCat-Team/ChmlFrpLauncher](https://github.com/TechCat-Team/ChmlFrpLauncher)
-- **官网**: [ChmlFrp](https://www.chmlfrp.net)
-- **文档**: [ChmlFrpDocs](https://docs.chmlfrp.net)
-
-## 致谢
-
-感谢所有为项目做出贡献的开发者和用户！
-
----
-
-Made with love by [TechCat Team](https://github.com/TechCat-Team)
+本项目沿用 [Apache-2.0](LICENSE) 许可证，并保留上游署名与版权信息。

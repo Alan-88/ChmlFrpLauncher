@@ -1,6 +1,11 @@
 import { useState, useEffect } from "react";
 import { toast } from "sonner";
-import { updateService, type UpdateInfo } from "@/services/updateService";
+import {
+  FORK_UPDATE_DISABLED_MESSAGE,
+  FORK_UPDATES_ENABLED,
+  updateService,
+  type UpdateInfo,
+} from "@/services/updateService";
 
 export function useUpdate() {
   const [autoCheckUpdate, setAutoCheckUpdate] = useState(() =>
@@ -24,6 +29,10 @@ export function useUpdate() {
 
   const handleCheckUpdate = async () => {
     if (checkingUpdate) return;
+    if (!FORK_UPDATES_ENABLED) {
+      toast.info(FORK_UPDATE_DISABLED_MESSAGE, { duration: 5000 });
+      return;
+    }
 
     setCheckingUpdate(true);
     const toastId = toast.loading("正在检查更新...", { duration: Infinity });
@@ -56,6 +65,10 @@ export function useUpdate() {
   };
 
   const handleToggleAutoCheckUpdate = (enabled: boolean) => {
+    if (!FORK_UPDATES_ENABLED) {
+      toast.info(FORK_UPDATE_DISABLED_MESSAGE, { duration: 5000 });
+      return;
+    }
     updateService.setAutoCheckEnabled(enabled);
     setAutoCheckUpdate(enabled);
     toast.success(

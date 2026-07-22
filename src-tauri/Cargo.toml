@@ -1,10 +1,10 @@
 [package]
 name = "ChmlFrpLauncher"
 version = "0.7.5"
-description = "ChmlFrp的官方启动器"
+description = "ChmlFrp Launcher 的个人扩展 fork，支持 SSH 远程运行"
 authors = ["南充市轻爪网络科技有限公司 <chaoji@chcat.cn>"]
 license = "Apache-2.0"
-repository = "https://github.com/TechCat-Team/ChmlFrpLauncher"
+repository = "https://github.com/Alan-88/ChmlFrpLauncher"
 edition = "2021"
 rust-version = "1.77.2"
 
