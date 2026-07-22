@@ -1,5 +1,22 @@
 use std::path::PathBuf;
+use std::process::Command;
 use tauri::Manager;
+
+const PROXY_ENV_KEYS: &[&str] = &[
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+];
+
+/// frpc should only use an explicitly configured proxy from its config file.
+pub fn clear_inherited_proxy_env(command: &mut Command) {
+    for key in PROXY_ENV_KEYS {
+        command.env_remove(key);
+    }
+}
 
 // 隐藏用户日志里面的token
 pub fn sanitize_log(message: &str, secrets: &[&str]) -> String {
@@ -111,4 +128,22 @@ fn sanitize_token(message: &str, token: &str) -> String {
     }
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{clear_inherited_proxy_env, PROXY_ENV_KEYS};
+    use std::{ffi::OsStr, process::Command};
+
+    #[test]
+    fn frpc_child_does_not_inherit_proxy_environment() {
+        let mut command = Command::new("frpc");
+        clear_inherited_proxy_env(&mut command);
+
+        for key in PROXY_ENV_KEYS {
+            assert!(command
+                .get_envs()
+                .any(|(name, value)| name == OsStr::new(key) && value.is_none()));
+        }
+    }
 }

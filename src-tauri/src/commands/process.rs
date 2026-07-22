@@ -1,5 +1,5 @@
 use crate::models::{FrpcProcesses, LogMessage, ProcessGuardState, TunnelConfig};
-use crate::utils::{resolve_frpc_path, sanitize_log};
+use crate::utils::{clear_inherited_proxy_env, resolve_frpc_path, sanitize_log};
 use std::fmt::Write;
 use std::io::{BufRead, BufReader};
 use std::process::{Command as StdCommand, Stdio};
@@ -141,6 +141,7 @@ pub async fn start_frpc(
     }
 
     let mut cmd = StdCommand::new(&frpc_path);
+    clear_inherited_proxy_env(&mut cmd);
     cmd.current_dir(&app_dir)
         .arg("-c")
         .arg(&config_path)

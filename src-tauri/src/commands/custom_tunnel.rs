@@ -1,5 +1,5 @@
 use crate::models::{FrpcProcesses, LogMessage, ProcessGuardState};
-use crate::utils::resolve_frpc_path;
+use crate::utils::{clear_inherited_proxy_env, resolve_frpc_path};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{BufRead, BufReader};
@@ -424,6 +424,7 @@ pub async fn start_custom_tunnel(
     }
 
     let mut cmd = StdCommand::new(&frpc_path);
+    clear_inherited_proxy_env(&mut cmd);
     cmd.current_dir(&app_dir)
         .arg("-c")
         .arg(&config_file)
