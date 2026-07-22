@@ -182,6 +182,7 @@ pub fn run() {
 
             let app_handle = app.handle().clone();
             commands::process_guard::start_guard_monitor(app_handle.clone());
+            extensions::remote_runner::runs::start_remote_run_monitor(app_handle.clone());
 
             // 恢复还在运行的节点进程
             let recovered = commands::process_persistence::recover_running_tunnels(&app_handle);

@@ -15,8 +15,18 @@ use crate::{
 };
 use chrono::Utc;
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    sync::Mutex,
+    thread,
+    time::Duration,
+};
 use tauri::Emitter;
+
+const REMOTE_MONITOR_INTERVAL: Duration = Duration::from_secs(30);
+const STARTUP_LOG_WAIT: Duration = Duration::from_millis(800);
+
+static REMOTE_RUN_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Deserialize)]
 pub struct RemoteApiStartInput {
@@ -48,6 +58,41 @@ fn emit_log(app_handle: &tauri::AppHandle, tunnel_id: i32, message: String) {
 
 fn emit_run_update(app_handle: &tauri::AppHandle, runs: &[RemoteRun]) {
     let _ = app_handle.emit("remote-run-updated", runs);
+}
+
+fn emit_remote_logs(
+    app_handle: &tauri::AppHandle,
+    host_name: &str,
+    run: &RemoteRun,
+    is_first_batch: bool,
+    lines: Vec<String>,
+) {
+    if lines.is_empty() {
+        return;
+    }
+    if is_first_batch {
+        emit_log(
+            app_handle,
+            run.tunnel_id,
+            "[I] [ChmlFrpLauncher] 远程 frpc 进程已启动，正在同步运行日志。".to_string(),
+        );
+    }
+
+    for line in lines {
+        let line = strip_ansi_escapes::strip_str(&line);
+        emit_log(
+            app_handle,
+            run.tunnel_id,
+            format!("[远程 {} · {}] {}", host_name, run.run_id, line),
+        );
+    }
+}
+
+fn with_remote_run_lock<T>(operation: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    let _guard = REMOTE_RUN_LOCK
+        .lock()
+        .map_err(|_| "远程运行器状态锁异常".to_string())?;
+    operation()
 }
 
 fn mark_unreachable(run: &mut RemoteRun, message: String) {
@@ -97,16 +142,15 @@ fn sync_runs(app_handle: &tauri::AppHandle) -> Result<Vec<RemoteRun>, String> {
                     run.unreachable_since = None;
                     run.message = None;
                     run.updated_at = now();
+                    let is_first_log_batch = run.log_offset == 0;
                     match fetch_remote_logs(&host, run) {
-                        Ok(lines) => {
-                            for line in lines {
-                                emit_log(
-                                    app_handle,
-                                    run.tunnel_id,
-                                    format!("[远程 {} · {}] {}", host.name, run.run_id, line),
-                                );
-                            }
-                        }
+                        Ok(lines) => emit_remote_logs(
+                            app_handle,
+                            &host.name,
+                            run,
+                            is_first_log_batch,
+                            lines,
+                        ),
                         Err(error) => mark_unreachable(run, error),
                     }
                 }
@@ -140,6 +184,13 @@ fn sync_runs(app_handle: &tauri::AppHandle) -> Result<Vec<RemoteRun>, String> {
         emit_run_update(app_handle, &runs);
     }
     Ok(runs)
+}
+
+pub(crate) fn start_remote_run_monitor(app_handle: tauri::AppHandle) {
+    thread::spawn(move || loop {
+        let _ = with_remote_run_lock(|| sync_runs(&app_handle));
+        thread::sleep(REMOTE_MONITOR_INTERVAL);
+    });
 }
 
 fn start_remote_run(
@@ -192,11 +243,13 @@ fn start_remote_run(
         app_handle,
         run.tunnel_id,
         format!(
-            "[I] [ChmlFrpLauncher] 远程 frpc 进程已启动（主机：{}，运行：{}）。",
+            "[I] [ChmlFrpLauncher] 远程运行包装器已启动（主机：{}，运行：{}）。",
             host.name, run.run_id
         ),
     );
     emit_run_update(app_handle, &runs);
+    thread::sleep(STARTUP_LOG_WAIT);
+    let _ = sync_runs(app_handle);
     Ok(format!("已在远程主机“{}”启动", host.name))
 }
 
@@ -244,6 +297,10 @@ fn stop_remote_run(app_handle: &tauri::AppHandle, tunnel_key: &str) -> Result<St
 }
 
 pub(crate) fn stop_all_remote_runs(app_handle: &tauri::AppHandle) -> Result<(), String> {
+    with_remote_run_lock(|| stop_all_remote_runs_unlocked(app_handle))
+}
+
+fn stop_all_remote_runs_unlocked(app_handle: &tauri::AppHandle) -> Result<(), String> {
     let keys = load_runs(app_handle)?
         .into_iter()
         .filter(|run| run.status.is_active())
@@ -323,7 +380,7 @@ pub fn get_remote_runs(app_handle: tauri::AppHandle) -> Result<Vec<RemoteRun>, S
 
 #[tauri::command]
 pub async fn sync_remote_runs(app_handle: tauri::AppHandle) -> Result<Vec<RemoteRun>, String> {
-    tokio::task::spawn_blocking(move || sync_runs(&app_handle))
+    tokio::task::spawn_blocking(move || with_remote_run_lock(|| sync_runs(&app_handle)))
         .await
         .map_err(|error| format!("同步远端运行状态失败: {error}"))?
 }
@@ -334,16 +391,18 @@ pub async fn start_remote_api_frpc(
     input: RemoteApiStartInput,
 ) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
-        let tunnel_id = input.config.tunnel_id;
-        let config_content = generate_frpc_config(&input.config)?;
-        start_remote_run(
-            &app_handle,
-            input.host_id,
-            input.tunnel_key,
-            tunnel_id,
-            config_content,
-            input.guard_enabled,
-        )
+        with_remote_run_lock(|| {
+            let tunnel_id = input.config.tunnel_id;
+            let config_content = generate_frpc_config(&input.config)?;
+            start_remote_run(
+                &app_handle,
+                input.host_id,
+                input.tunnel_key,
+                tunnel_id,
+                config_content,
+                input.guard_enabled,
+            )
+        })
     })
     .await
     .map_err(|error| format!("启动远端 frpc 任务失败: {error}"))?
@@ -355,14 +414,16 @@ pub async fn start_remote_custom_frpc(
     input: RemoteCustomStartInput,
 ) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
-        start_remote_run(
-            &app_handle,
-            input.host_id,
-            input.tunnel_key,
-            input.tunnel_id,
-            input.config_content,
-            input.guard_enabled,
-        )
+        with_remote_run_lock(|| {
+            start_remote_run(
+                &app_handle,
+                input.host_id,
+                input.tunnel_key,
+                input.tunnel_id,
+                input.config_content,
+                input.guard_enabled,
+            )
+        })
     })
     .await
     .map_err(|error| format!("启动远端自定义 frpc 任务失败: {error}"))?
@@ -373,7 +434,9 @@ pub async fn stop_remote_frpc(
     app_handle: tauri::AppHandle,
     tunnel_key: String,
 ) -> Result<String, String> {
-    tokio::task::spawn_blocking(move || stop_remote_run(&app_handle, &tunnel_key))
+    tokio::task::spawn_blocking(move || {
+        with_remote_run_lock(|| stop_remote_run(&app_handle, &tunnel_key))
+    })
         .await
         .map_err(|error| format!("停止远端 frpc 任务失败: {error}"))?
 }
