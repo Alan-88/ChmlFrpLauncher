@@ -1,19 +1,26 @@
+import type { StoredUser } from "./authSession";
 import {
-  ACCOUNT_OAUTH_CLIENT_ID,
-  ACCOUNT_OAUTH_CLIENT_SECRET,
-  ACCOUNT_OAUTH_ISSUER,
-  DEVICE_CODE_DEFAULT_SCOPE,
-} from "./oauthConfig";
-import {
-  clearStoredUser,
-  getStoredUser,
-  getStoredUserPersistence,
-  saveStoredUser,
-  type StoredUser,
-} from "./authSession";
+  AUTH_SESSION_EXPIRED_MESSAGE,
+  clearSessionForAccessToken,
+  getAuthorization,
+  getRetryAuthorization,
+  isAuthenticationError as isOAuthAuthenticationError,
+  type DeviceTokenResponse,
+  type OAuthAuthorization,
+} from "./oauthSession";
 
 export { clearStoredUser, getStoredUser, saveStoredUser } from "./authSession";
 export type { StoredUser } from "./authSession";
+export {
+  AUTH_SESSION_EXPIRED_MESSAGE,
+  createDeviceAuthorization,
+  exchangeDeviceCodeForToken,
+  isAuthenticationError,
+} from "./oauthSession";
+export type {
+  DeviceAuthorizationResponse,
+  DeviceTokenResponse,
+} from "./oauthSession";
 
 const API_BASE_URL = "https://cf-v2.uapis.cn";
 
@@ -76,53 +83,15 @@ export interface SignInInfo {
   last_sign_in_time: string;
 }
 
-export interface DeviceAuthorizationResponse {
-  device_code: string;
-  user_code: string;
-  verification_uri: string;
-  verification_uri_complete?: string;
-  expires_in?: number;
-  interval?: number;
-}
-
-export interface DeviceTokenResponse {
-  access_token?: string;
-  token_type?: string;
-  expires_in?: number;
-  refresh_token?: string;
-  scope?: string;
-  error?: string;
-  error_description?: string;
-  error_uri?: string;
-}
-
 interface ApiResponse<T> {
   code: number;
   msg?: string;
   data?: T;
 }
 
-interface RawHttpResponse {
-  status: number;
-  body: string;
-}
-
 const isBrowser = typeof window !== "undefined";
 const NODE_UDP_CACHE_KEY = "node_udp_cache";
 const NODE_UDP_CACHE_TTL = 5 * 60 * 1000;
-export const AUTH_SESSION_EXPIRED_MESSAGE = "登录信息已过期，请重新登录";
-const AUTHENTICATION_ERROR_PATTERNS = [
-  "登录信息错误",
-  "登录信息已过期",
-  "无效的登录状态",
-  "token无效",
-  "token失效",
-  "token过期",
-  "invalid token",
-  "invalid_grant",
-  "unauthorized",
-  "http 401",
-];
 
 // 简单的请求去重（针对短时间内重复发起相同请求的场景）
 const pendingRequests = new Map<string, Promise<unknown>>();
@@ -142,20 +111,6 @@ function normalizeHeaders(h?: HeadersInit): Record<string, string> {
   return h as Record<string, string>;
 }
 
-export function isAuthenticationError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  const normalized = message.toLowerCase();
-  return AUTHENTICATION_ERROR_PATTERNS.some((pattern) =>
-    normalized.includes(pattern.toLowerCase()),
-  );
-}
-
-function hasAuthorizationHeader(headers: Record<string, string>): boolean {
-  return Object.keys(headers).some(
-    (header) => header.toLowerCase() === "authorization",
-  );
-}
-
 function getBypassProxy(): boolean {
   if (!isBrowser) return true;
   const stored = localStorage.getItem("bypassProxy");
@@ -168,175 +123,24 @@ function getRequestUrl(endpoint: string): string {
     : `${API_BASE_URL}/${endpoint}`;
 }
 
-function getOAuthUrl(path: string): string {
-  return new URL(path, ACCOUNT_OAUTH_ISSUER).toString();
-}
-
-function getOAuthHeaders(): Record<string, string> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/x-www-form-urlencoded",
-    Accept: "application/json",
-  };
-
-  if (ACCOUNT_OAUTH_CLIENT_SECRET.trim()) {
-    headers.Authorization = `Basic ${btoa(
-      `${ACCOUNT_OAUTH_CLIENT_ID}:${ACCOUNT_OAUTH_CLIENT_SECRET}`,
-    )}`;
+function withAuthorization(
+  headers: Record<string, string>,
+  authorization: string,
+): Record<string, string> {
+  const next = { ...headers };
+  for (const header of Object.keys(next)) {
+    if (header.toLowerCase() === "authorization") delete next[header];
   }
-
-  return headers;
+  next.authorization = authorization;
+  return next;
 }
 
-function getOAuthErrorMessage(
-  response: DeviceTokenResponse | undefined,
-  fallback: string,
-): string {
-  if (!response) {
-    return fallback;
-  }
-
-  return response.error_description || response.error || fallback;
-}
-
-function getCurrentAccessToken(user: StoredUser | null): string | undefined {
-  if (user?.accessToken?.trim()) {
-    return user.accessToken.trim();
-  }
-  return undefined;
-}
-
-function isAccessTokenExpiring(user: StoredUser | null): boolean {
-  const expiresAt = user?.accessTokenExpiresAt;
-  if (!expiresAt) {
-    return false;
-  }
-  return Date.now() >= expiresAt - 60_000;
-}
-
-function toBearerHeader(token: string): string {
-  return token.startsWith("Bearer ") ? token : `Bearer ${token}`;
-}
-
-async function refreshAccessToken(
-  refreshToken: string,
-): Promise<DeviceTokenResponse> {
-  const body = new URLSearchParams();
-  body.set("grant_type", "refresh_token");
-  body.set("refresh_token", refreshToken);
-
-  if (!ACCOUNT_OAUTH_CLIENT_SECRET.trim()) {
-    body.set("client_id", ACCOUNT_OAUTH_CLIENT_ID);
-  }
-
-  const response = await oauthRequest({
-    path: "/oauth2/token",
-    body,
-  });
-
-  return parseOAuthJson<DeviceTokenResponse>(
-    response,
-    "账户服务返回了无法解析的刷新响应",
-  );
-}
-
-async function ensureAuthenticatedUser(explicitToken?: string): Promise<{
-  storedUser: StoredUser | null;
-  accessToken: string;
-}> {
-  if (explicitToken?.trim()) {
-    return {
-      storedUser: getStoredUser(),
-      accessToken: explicitToken.trim(),
-    };
-  }
-
-  const storedUser = getStoredUser();
-  if (!storedUser) {
-    throw new Error(AUTH_SESSION_EXPIRED_MESSAGE);
-  }
-
-  const currentAccessToken = getCurrentAccessToken(storedUser);
-  if (currentAccessToken) {
-    if (storedUser.refreshToken && isAccessTokenExpiring(storedUser)) {
-      const refreshed = await refreshAccessToken(storedUser.refreshToken);
-      const accessToken = refreshed.access_token;
-      if (!accessToken) {
-        clearStoredUser();
-        throw new Error(
-          getOAuthErrorMessage(refreshed, "登录信息已过期，请重新登录"),
-        );
-      }
-      const updatedUser: StoredUser = {
-        ...storedUser,
-        accessToken,
-        refreshToken: refreshed.refresh_token || storedUser.refreshToken,
-        accessTokenExpiresAt: refreshed.expires_in
-          ? Date.now() + refreshed.expires_in * 1000
-          : storedUser.accessTokenExpiresAt,
-        tokenType: refreshed.token_type || storedUser.tokenType || "Bearer",
-      };
-      saveStoredUser(updatedUser, getStoredUserPersistence());
-      return {
-        storedUser: updatedUser,
-        accessToken,
-      };
-    }
-
-    return {
-      storedUser,
-      accessToken: currentAccessToken,
-    };
-  }
-
-  clearStoredUser();
-  throw new Error(AUTH_SESSION_EXPIRED_MESSAGE);
-}
-
-async function getAuthorization(token?: string): Promise<string> {
-  const { accessToken } = await ensureAuthenticatedUser(token);
-  return toBearerHeader(accessToken);
-}
-
-async function oauthRequest(options: {
-  path: string;
-  body: URLSearchParams;
-}): Promise<RawHttpResponse> {
-  const response = await fetch(getOAuthUrl(options.path), {
-    method: "POST",
-    headers: getOAuthHeaders(),
-    body: options.body.toString(),
-    cache: "no-store",
-    credentials: "omit",
-  });
-
-  return {
-    status: response.status,
-    body: await response.text(),
-  };
-}
-
-function parseOAuthJson<T>(response: RawHttpResponse, fallback: string): T {
-  try {
-    return JSON.parse(response.body) as T;
-  } catch {
-    const content = response.body.trim().toLowerCase();
-    if (content.startsWith("<!doctype html") || content.startsWith("<html")) {
-      throw new Error(
-        "账户中心返回了登录页而不是 OAuth 响应，请确认当前请求必须使用浏览器环境发起，且 client_id 已开启设备码授权。",
-      );
-    }
-
-    if (response.status === 401) {
-      throw new Error(
-        "账户中心拒绝了当前客户端，请检查 client_id 或 client_secret 是否正确。",
-      );
-    }
-
-    throw new Error(fallback);
-  }
-}
-
-async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
+async function request<T>(
+  endpoint: string,
+  options?: RequestInit,
+  authorization?: OAuthAuthorization,
+  retryingAuthentication = false,
+): Promise<T> {
   const headersObj = normalizeHeaders(options?.headers);
   const key = JSON.stringify({
     endpoint,
@@ -398,8 +202,25 @@ async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
         throw new Error(data?.msg || "请求失败");
       }
     } catch (error) {
-      if (hasAuthorizationHeader(headersObj) && isAuthenticationError(error)) {
-        clearStoredUser();
+      if (
+        authorization?.sessionAccessToken &&
+        isOAuthAuthenticationError(error)
+      ) {
+        const retryAuthorization = retryingAuthentication
+          ? null
+          : await getRetryAuthorization(authorization.sessionAccessToken);
+        if (retryAuthorization) {
+          return request<T>(
+            endpoint,
+            {
+              ...options,
+              headers: withAuthorization(headersObj, retryAuthorization.value),
+            },
+            retryAuthorization,
+            true,
+          );
+        }
+        clearSessionForAccessToken(authorization.sessionAccessToken);
         throw new Error(AUTH_SESSION_EXPIRED_MESSAGE);
       }
       throw error;
@@ -432,65 +253,6 @@ export async function login(
   };
 }
 
-export async function createDeviceAuthorization(
-  scope = DEVICE_CODE_DEFAULT_SCOPE,
-): Promise<DeviceAuthorizationResponse> {
-  const body = new URLSearchParams();
-  body.set("client_id", ACCOUNT_OAUTH_CLIENT_ID);
-
-  const normalizedScope = scope
-    .split(/[,\s]+/)
-    .map((item) => item.trim())
-    .filter(Boolean)
-    .join(" ");
-
-  if (normalizedScope) {
-    body.set("scope", normalizedScope);
-  }
-
-  const response = await oauthRequest({
-    path: "/oauth2/device_authorization",
-    body,
-  });
-
-  const data = parseOAuthJson<
-    DeviceAuthorizationResponse | DeviceTokenResponse
-  >(response, "账户服务返回了无法解析的响应");
-
-  if (
-    response.status >= 200 &&
-    response.status < 300 &&
-    data &&
-    "device_code" in data
-  ) {
-    return data;
-  }
-
-  throw new Error(getOAuthErrorMessage(data ?? undefined, "申请设备授权失败"));
-}
-
-export async function exchangeDeviceCodeForToken(
-  deviceCode: string,
-): Promise<DeviceTokenResponse> {
-  const body = new URLSearchParams();
-  body.set("grant_type", "urn:ietf:params:oauth:grant-type:device_code");
-  body.set("device_code", deviceCode);
-
-  if (!ACCOUNT_OAUTH_CLIENT_SECRET.trim()) {
-    body.set("client_id", ACCOUNT_OAUTH_CLIENT_ID);
-  }
-
-  const response = await oauthRequest({
-    path: "/oauth2/token",
-    body,
-  });
-
-  return parseOAuthJson<DeviceTokenResponse>(
-    response,
-    "账户服务返回了无法解析的令牌响应",
-  );
-}
-
 export async function loginWithAccessToken(
   accessToken: string,
   tokenResponse?: Pick<
@@ -519,9 +281,13 @@ export async function loginWithAccessToken(
 export async function fetchTunnels(token?: string): Promise<Tunnel[]> {
   const authorization = await getAuthorization(token);
 
-  const data = await request<Tunnel[]>("/tunnel", {
-    headers: { authorization },
-  });
+  const data = await request<Tunnel[]>(
+    "/tunnel",
+    {
+      headers: { authorization: authorization.value },
+    },
+    authorization,
+  );
 
   if (Array.isArray(data)) return data;
   throw new Error("获取隧道列表失败");
@@ -530,9 +296,13 @@ export async function fetchTunnels(token?: string): Promise<Tunnel[]> {
 export async function fetchFlowLast7Days(token?: string): Promise<FlowPoint[]> {
   const authorization = await getAuthorization(token);
 
-  const data = await request<FlowPoint[]>("/flow_last_7_days", {
-    headers: { authorization },
-  });
+  const data = await request<FlowPoint[]>(
+    "/flow_last_7_days",
+    {
+      headers: { authorization: authorization.value },
+    },
+    authorization,
+  );
 
   if (Array.isArray(data)) return data;
   throw new Error("获取近7日流量失败");
@@ -541,9 +311,13 @@ export async function fetchFlowLast7Days(token?: string): Promise<FlowPoint[]> {
 export async function fetchUserInfo(token?: string): Promise<UserInfo> {
   const authorization = await getAuthorization(token);
 
-  const data = await request<UserInfo>("/userinfo", {
-    headers: { authorization },
-  });
+  const data = await request<UserInfo>(
+    "/userinfo",
+    {
+      headers: { authorization: authorization.value },
+    },
+    authorization,
+  );
 
   if (data) return data as UserInfo;
   throw new Error("获取用户信息失败");
@@ -552,9 +326,13 @@ export async function fetchUserInfo(token?: string): Promise<UserInfo> {
 export async function fetchSignInInfo(token?: string): Promise<SignInInfo> {
   const authorization = await getAuthorization(token);
 
-  const data = await request<SignInInfo>("/qiandao_info", {
-    headers: { authorization },
-  });
+  const data = await request<SignInInfo>(
+    "/qiandao_info",
+    {
+      headers: { authorization: authorization.value },
+    },
+    authorization,
+  );
 
   if (data) return data;
   throw new Error("获取签到信息失败");
@@ -578,7 +356,7 @@ export async function offlineTunnel(
   const endpoint = "/offline_tunnel";
   const headersObj = {
     "Content-Type": "application/x-www-form-urlencoded",
-    authorization,
+    authorization: authorization.value,
   };
 
   const bypassProxy = getBypassProxy();
@@ -635,9 +413,13 @@ export async function deleteTunnel(
 ): Promise<void> {
   const authorization = await getAuthorization(token);
 
-  await request<unknown>(`/delete_tunnel?tunnelid=${tunnelId}`, {
-    headers: { authorization },
-  });
+  await request<unknown>(
+    `/delete_tunnel?tunnelid=${tunnelId}`,
+    {
+      headers: { authorization: authorization.value },
+    },
+    authorization,
+  );
 }
 
 export interface Node {
@@ -749,9 +531,13 @@ export interface UpdateTunnelParams {
 export async function fetchNodes(token?: string): Promise<Node[]> {
   const authorization = await getAuthorization(token);
 
-  const data = await request<Node[]>("/node", {
-    headers: { authorization },
-  });
+  const data = await request<Node[]>(
+    "/node",
+    {
+      headers: { authorization: authorization.value },
+    },
+    authorization,
+  );
 
   if (Array.isArray(data)) return data;
   throw new Error("获取节点列表失败");
@@ -791,8 +577,9 @@ export async function fetchNodeInfo(
   const data = await request<NodeInfo>(
     `/nodeinfo?node=${encodeURIComponent(nodeName)}`,
     {
-      headers: { authorization },
+      headers: { authorization: authorization.value },
     },
+    authorization,
   );
 
   if (data) return data;
@@ -805,14 +592,18 @@ export async function createTunnel(
 ): Promise<void> {
   const authorization = await getAuthorization(token);
 
-  await request<unknown>("/create_tunnel", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      authorization,
+  await request<unknown>(
+    "/create_tunnel",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        authorization: authorization.value,
+      },
+      body: JSON.stringify(params),
     },
-    body: JSON.stringify(params),
-  });
+    authorization,
+  );
 }
 
 export async function updateTunnel(
@@ -821,12 +612,16 @@ export async function updateTunnel(
 ): Promise<void> {
   const authorization = await getAuthorization(token);
 
-  await request<unknown>("/update_tunnel", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      authorization,
+  await request<unknown>(
+    "/update_tunnel",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        authorization: authorization.value,
+      },
+      body: JSON.stringify(params),
     },
-    body: JSON.stringify(params),
-  });
+    authorization,
+  );
 }
